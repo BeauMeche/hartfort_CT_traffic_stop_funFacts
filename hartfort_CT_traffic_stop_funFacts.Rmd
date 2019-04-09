@@ -1,0 +1,166 @@
+---
+title: "Hartford Open Policing Fun Facts"
+author: "Beau Meche"
+date: "April 9, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(tidyverse)
+library(sf)
+library(fs)
+library(lubridate)
+library(gifski)
+library(png)
+library(dplyr)
+library(gt)
+library(ggplot2)
+library(maps)
+library(ggthemes)
+library(gganimate)
+library(forcats)
+```
+
+```{r data_import, echo=FALSE, cache=TRUE}
+# read in the rds data directly, and it is already nice and neat 
+
+hartford <- read_rds(url("https://stacks.stanford.edu/file/druid:tr137st9964/tr137st9964_ct_hartford_2019_02_25.rds"))
+
+#this is more obnoxious data that has been 'tarballed', assign it a destination
+
+download.file(url = "https://stacks.stanford.edu/file/druid:tr137st9964/tr137st9964_ct_hartford_shapefiles_2019_02_25.tgz", destfile = "shapes.tgz", quiet = TRUE)
+
+#this 'unzips' the tarring done to our data
+
+untar("shapes.tgz")
+
+#this is the shapefile for mapping, it is cumbersome and has many files so cache and delete ASAP
+
+shapes_data <- read_sf("ct_hartford_shapefiles/Hartford_Neighborhoods.shp")
+
+#delete clunky files
+
+file_delete(c("shapes.tgz", "ct_hartford_shapefiles/"))
+```
+
+```{r static_hartford_map, echo=FALSE}
+#date stamp info because these files get updated occasionally
+
+date_min_h <- hartford %>% arrange(date) %>% slice(1) %>% pull(date) %>% format("%B %d, %Y")
+date_max_h <- hartford %>% arrange(desc(date)) %>% slice(1) %>% pull(date) %>% format("%B %d, %Y")
+
+tickets <- hartford %>% 
+  # I chose to look at Signal violations and the resulting arrest count. Most of my time here was devoted to fiddling with the map and the extraneous values (which I am still confused about their existence... I suppose they could be state troopers... but alas). I first need outcome to exist and to be a traffic signal infraction. 
+  
+  filter(!is.na(outcome) & reason_for_stop == "Traffic Control Signal") %>% 
+  
+  # to map the data I need existent GPS data
+  
+  filter(!is.na(lng) & !is.na(lat)) %>% 
+  
+  # this is my rough approximation of putting Hartford in a "box" by way of hackily clicking around google maps and dropping pins on a projected boundary of Hartford. 
+  
+  filter(lat <= 41.806654 & lat >= 41.735159) %>% 
+  filter(lng <= -72.644363 & lng >= -72.716440) %>% 
+  mutate(arrested = arrest_made == TRUE)
+
+# this allows the format to be mapped and assigns where to find the GPS data.
+
+ticket_locations <- st_as_sf(tickets, 
+                             coords = c("lng", "lat"), 
+                             
+                             # evidently crs determines (coord ref system), GPS constant value
+                             
+                             crs = 4326) 
+
+#first goes the shape file "base" of sorts
+
+ggplot(data = shapes_data) +
+  geom_sf() +
+  
+  #now I can overlay the Signal Infraction points over my nicely filleted map. Alpha added for clustered points, color added to show arrests vs. other things, legend was in the way so I removed it. 
+  
+  geom_sf(data = ticket_locations, aes(color = arrested), show.legend = FALSE, alpha = .65) + 
+  scale_color_manual(values = c("green", "red")) +
+  theme_map() + 
+  
+  # yet another bout of labels and citation 
+  
+  labs(title = "Hartford CT Traffic Signal Violations",
+       subtitle = "Red points indicate resulting arrests. ", 
+       caption = "Source: Stanford Open Policing Project" )
+
+#below is personal experimentatoin, disregard vvv 
+## `r hartford %>% arrange(date) %>% select(date) %>% slice(1)`. (this is if I have time to add date to this title)
+```
+
+
+Data last taken from `r date_min_h` to `r date_max_h`.
+
+```{r demography_info, echo=FALSE}
+q2 <- hartford %>% 
+  
+  #want a table showing calculations relative to races and genders
+  
+  group_by(subject_race, subject_sex) %>% 
+  
+  #for calculations, I need a sum of arrests, I tried to mutate but that was too awkward and a friend suggested summarize. Much smoother. 
+  
+  summarize(ct = sum(arrest_made), total = n()) %>% 
+  
+  # now I can mutate, this is a new thing
+  
+  mutate(arrest_rate = ct/total) %>% 
+  
+  # ungroup before tabling and remove unneccessary columns from the table post-math
+  
+  ungroup() %>% select(-total, -ct) %>% 
+  
+  # choose the column vars and what to fill the table with respectively
+  
+  spread(subject_sex, arrest_rate) %>% 
+  
+  # created the table and changed the ugly decimals to more asthetically pleasing %s
+  
+  gt() %>% fmt_percent(columns= vars(male, female)) %>% 
+  
+  # beautified the table with proper capitalization and titles and such
+  
+  cols_label(subject_race = "",
+             male = "Males", 
+             female = "Females") %>% 
+  tab_header("Demographic Arrest Rates in Hartford CT by Gender", subtitle = "From October 2013 to September 2016") %>% 
+  
+  #Cite all of the things you touch, theivery is frowned upon in most places
+  
+  tab_source_note("Source: Stanford Open Policing Project")
+q2
+```
+
+
+Data last taken from `r date_min_h` to `r date_max_h`.
+
+
+
+```{r stops_by_minute, echo=FALSE, warning=FALSE}
+q3 <- hartford %>% 
+  # not much to see here, stacking 'bins' with stop counts shows aggregation over the course of the day for about 3 years. 1440 minutes in the day shows the difference by minute and aggregations of incidents around the "nice" times of the day (presumably because filling out paperwork includes human laziness)
+  ggplot(aes(x=time))+geom_histogram(bins = 1440)+
+  #label things so people can read them or youv'e worked for nothing
+  labs(title = "Traffic Stops by Time of Day", 
+       subtitle = "From October 2013 to September 2016",
+       # cite things, theivery is a sin
+       caption = "Source: Stanford Open Policing Project",
+       x = "Time of Day",
+       y = "Number of Stops")
+q3
+```
+
+
+Data last taken from `r date_min_h` to `r date_max_h`.
+
+
+
+
