@@ -1,1 +1,1 @@
-# hartfort_CT_traffic_stop_funFacts
+This project uses data from the Stanford Open Policing and outlines different numeric and geographic queries that I though were interesting. It may be updated as I have more time to explore the data. 
